@@ -125,6 +125,7 @@
                             <th class="sortable px-6 py-4 text-xs font-bold text-slate-500 uppercase" onclick="handleSort('subject')">Materia <i class="fas fa-sort ml-1"></i></th>
                             <th class="sortable px-6 py-4 text-xs font-bold text-slate-500 uppercase text-center" onclick="handleSort('quizScore')">Quiz <i class="fas fa-sort ml-1"></i></th>
                             <th class="sortable px-6 py-4 text-xs font-bold text-slate-500 uppercase text-center" onclick="handleSort('sentenceScore')">Sentencias <i class="fas fa-sort ml-1"></i></th>
+                            <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase text-center">Acciones</th>
                         </tr>
                     </thead>
                     <tbody id="data-table-body" class="divide-y divide-slate-50"></tbody>
@@ -140,12 +141,24 @@
         </div>
     </div>
 
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 class="text-xl font-bold text-slate-800 mb-2">¿Eliminar registro?</h3>
+            <p class="text-slate-500 text-sm mb-6">Esta acción no se puede deshacer. Se borrarán permanentemente los resultados de este estudiante.</p>
+            <div class="flex gap-3">
+                <button onclick="closeDeleteModal()" class="flex-1 px-4 py-2 rounded-xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">Cancelar</button>
+                <button id="confirm-delete-btn" class="flex-1 px-4 py-2 rounded-xl font-bold text-white bg-red-500 hover:bg-red-600 transition-colors">Eliminar</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // CONFIGURACIÓN OFICIAL (Firebase Config)
+        // CONFIGURACIÓN OFICIAL
         const firebaseConfig = {
             apiKey: "AIzaSyATYzJrUE-R2IzYhrRQeXrBjXyQlAQsoXM",
             authDomain: "misnotasescolares-91844.firebaseapp.com",
@@ -157,24 +170,19 @@
         const db = getFirestore(app);
         const auth = getAuth(app);
         
-        // RUTA OFICIAL (Firestore Path)
-        // artifacts/linguo-kids-v1/public/data/student_scores
         const COLLECTION_PATH = ['artifacts', 'linguo-kids-v1', 'public', 'data', 'student_scores'];
 
         let allData = [];
         let filteredData = [];
         let sortConfig = { key: 'timestamp', direction: 'desc' };
         let charts = { course: null, scores: null, trend: null };
+        let docToDelete = null;
 
         async function init() {
             try {
-                // Inicio de sesión anónimo según directriz de seguridad
                 await signInAnonymously(auth);
                 onAuthStateChanged(auth, (user) => { 
-                    if (user) {
-                        console.log("Sesión activa:", user.uid);
-                        fetchData(); 
-                    }
+                    if (user) fetchData(); 
                 });
             } catch (err) { 
                 console.error("Error de autenticación:", err); 
@@ -191,7 +199,6 @@
             body.innerHTML = '';
 
             try {
-                // Acceso directo a la ruta estructurada
                 const q = collection(db, ...COLLECTION_PATH);
                 const snapshot = await getDocs(q);
                 allData = [];
@@ -200,7 +207,6 @@
                     const d = doc.data();
                     allData.push({ 
                         id: doc.id, 
-                        // Mapeo según la Estructura de los Documentos solicitada
                         studentName: d.studentName || '---',
                         course: d.course || d.grado || '---',
                         subject: d.subject || d.materia || '---',
@@ -214,7 +220,6 @@
                 filterData();
             } catch (error) { 
                 console.error("Error al leer Firestore:", error); 
-                alert("Error al conectar con la base de datos. Verifica permisos.");
             } 
             finally {
                 refreshIcon.classList.remove('fa-spin');
@@ -222,8 +227,32 @@
             }
         };
 
+        window.openDeleteModal = (id) => {
+            docToDelete = id;
+            document.getElementById('delete-modal').classList.remove('hidden');
+            document.getElementById('delete-modal').classList.add('flex');
+        };
+
+        window.closeDeleteModal = () => {
+            docToDelete = null;
+            document.getElementById('delete-modal').classList.add('hidden');
+            document.getElementById('delete-modal').classList.remove('flex');
+        };
+
+        document.getElementById('confirm-delete-btn').onclick = async () => {
+            if (!docToDelete) return;
+            try {
+                const docRef = doc(db, ...COLLECTION_PATH, docToDelete);
+                await deleteDoc(docRef);
+                closeDeleteModal();
+                fetchData(); // Recargar datos tras borrar
+            } catch (error) {
+                console.error("Error al borrar:", error);
+                alert("No se pudo eliminar el registro. Revisa los permisos.");
+            }
+        };
+
         function updateCharts(data) {
-            // Chart Distribución por Curso
             const courseCounts = {};
             data.forEach(d => {
                 const label = d.course;
@@ -244,14 +273,11 @@
                 },
                 options: { 
                     maintainAspectRatio: false, 
-                    plugins: { 
-                        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10, family: 'Quicksand' } } } 
-                    },
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10, family: 'Quicksand' } } } },
                     cutout: '65%'
                 }
             });
 
-            // Chart Promedio de Notas
             const avgQuiz = data.length ? data.reduce((a,c) => a + c.quizScore, 0) / data.length : 0;
             const avgSent = data.length ? data.reduce((a,c) => a + c.sentenceScore, 0) / data.length : 0;
 
@@ -278,7 +304,6 @@
                 }
             });
 
-            // Chart Tendencia Temporal
             const trendData = {};
             data.forEach(d => {
                 if(d.timestamp) {
@@ -332,6 +357,11 @@
                         <td class="px-6 py-4 text-xs text-slate-600 font-medium italic">${item.subject}</td>
                         <td class="px-6 py-4 text-center font-bold ${item.quizScore >= 70 ? 'text-emerald-600' : 'text-amber-600'} text-xs">${item.quizScore}%</td>
                         <td class="px-6 py-4 text-center font-bold ${item.sentenceScore >= 70 ? 'text-emerald-600' : 'text-amber-600'} text-xs">${item.sentenceScore}%</td>
+                        <td class="px-6 py-4 text-center">
+                            <button onclick="openDeleteModal('${item.id}')" class="text-slate-300 hover:text-red-500 transition-colors p-2" title="Borrar registro">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </td>
                     </tr>
                 `;
             }).join('');
@@ -347,15 +377,9 @@
             filteredData.sort((a, b) => {
                 let valA = a[sortConfig.key];
                 let valB = b[sortConfig.key];
-                
-                if (sortConfig.key === 'timestamp') { 
-                    valA = valA?.seconds || 0; 
-                    valB = valB?.seconds || 0; 
-                }
-                
+                if (sortConfig.key === 'timestamp') { valA = valA?.seconds || 0; valB = valB?.seconds || 0; }
                 if (typeof valA === 'string') valA = valA.toLowerCase();
                 if (typeof valB === 'string') valB = valB.toLowerCase();
-                
                 if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
                 if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
                 return 0;
@@ -373,26 +397,15 @@
                 const matchesN = item.studentName.toLowerCase().includes(nameT);
                 const matchesC = item.course.toLowerCase().includes(courseT);
                 let matchesD = true;
-                
                 if (item.timestamp && (dateF || dateT)) {
                     const itemD = new Date(item.timestamp.seconds * 1000);
                     itemD.setHours(0,0,0,0);
-                    
-                    if (dateF) {
-                        const start = new Date(dateF);
-                        start.setHours(0,0,0,0);
-                        if (itemD < start) matchesD = false;
-                    }
-                    if (dateT) {
-                        const end = new Date(dateT);
-                        end.setHours(0,0,0,0);
-                        if (itemD > end) matchesD = false;
-                    }
+                    if (dateF) { const start = new Date(dateF); start.setHours(0,0,0,0); if (itemD < start) matchesD = false; }
+                    if (dateT) { const end = new Date(dateT); end.setHours(0,0,0,0); if (itemD > end) matchesD = false; }
                 }
                 return matchesN && matchesC && matchesD;
             });
 
-            // Actualizar KPIs de la cabecera
             document.getElementById('stat-total').innerText = filteredData.length;
             const uniqueCourses = [...new Set(filteredData.map(d => d.course))].filter(c => c !== '---');
             document.getElementById('stat-courses').innerText = uniqueCourses.length;
@@ -419,33 +432,19 @@
 
         window.exportToCSV = () => {
             if (filteredData.length === 0) return;
-            
-            let csv = "\uFEFF"; // Byte Order Mark for Excel UTF-8 support
-            csv += "Fecha,Estudiante,Curso,Materia,Quiz(%),Sentencias(%),UserId\n";
-            
+            let csv = "\uFEFFFecha,Estudiante,Curso,Materia,Quiz(%),Sentencias(%),UserId\n";
             filteredData.forEach(item => {
                 const date = item.timestamp ? new Date(item.timestamp.seconds * 1000).toLocaleString().replace(',', '') : '---';
-                // Escape quotes and wrap in quotes to handle commas in names
-                const name = `"${item.studentName.replace(/"/g, '""')}"`;
-                const course = `"${item.course.replace(/"/g, '""')}"`;
-                const subject = `"${item.subject.replace(/"/g, '""')}"`;
-                
-                csv += `${date},${name},${course},${subject},${item.quizScore},${item.sentenceScore},${item.userId}\n`;
+                csv += `${date},"${item.studentName}","${item.course}","${item.subject}",${item.quizScore},${item.sentenceScore},${item.userId}\n`;
             });
-            
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
-            const timestamp = new Date().toISOString().split('T')[0];
-            
             link.href = url;
-            link.setAttribute("download", `Reporte_LinguoKids_${timestamp}.csv`);
-            document.body.appendChild(link);
+            link.download = `LinguoKids_Export_${new Date().toISOString().split('T')[0]}.csv`;
             link.click();
-            document.body.removeChild(link);
         };
 
-        // Arrancar aplicación
         init();
     </script>
 </body>
